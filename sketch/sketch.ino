@@ -274,7 +274,7 @@ class LEDBoard {
 
             if (numberDigits == 1) 
             {
-              this->blinkAll(1, msDelay);
+                this->blinkAll(1, msDelay);
             }
             
             // Do lights
@@ -291,6 +291,39 @@ class LEDBoard {
                 this->updateLEDs();
                 delay(msDelay);
             }
+            // Restore the previous LED state
+            this->loadPrevState();
+            this->updateLEDs();
+        }
+
+        void blinkNumbers(char* numbers, int digits, int msDelay = 300) {
+            // Save the LED State and turn them all off
+            this->saveState();
+            this->setAll(false);
+            this->updateLEDs();
+
+            delay(msDelay);
+            for (int i = 0; i < digits; i++) {
+                int targetDigit = numbers[i] - '0';
+                Serial.print("targetDigit: ");
+                Serial.println(targetDigit);
+                Serial.print("i: ");
+                Serial.println(i);
+                Serial.print("numbers[i]: ");
+                Serial.println(numbers[i]);
+                Serial.print("numbers: ");
+                Serial.println(numbers);
+                this->redOn = targetDigit == 0 || targetDigit == 1  || targetDigit == 3 || targetDigit == 5 || targetDigit == 7 || targetDigit == 9;
+                this->yellowOn = targetDigit == 0 || targetDigit == 2  || targetDigit == 3 || targetDigit == 6 || targetDigit == 7;
+                this->blueOn = targetDigit == 0 || targetDigit == 4  || targetDigit == 5 || targetDigit == 6 || targetDigit == 7;
+                this->greenOn = targetDigit == 0 || targetDigit == 8  || targetDigit == 9;
+                this->updateLEDs();
+                delay(msDelay);
+                this->setAll(false);
+                this->updateLEDs();
+                delay(msDelay);
+            }
+
             // Restore the previous LED state
             this->loadPrevState();
             this->updateLEDs();
@@ -322,12 +355,21 @@ class LEDBoard {
             this->updateLEDs();
         }
 
+        void setLEDByIndex(int idx, int state) {
+            switch (idx) {
+                case 0: redOn    = state; break;
+                case 1: yellowOn = state; break;
+                case 2: blueOn   = state; break;
+                case 3: greenOn  = state; break;
+            }
+        }
+
         void setBlinkByIndex(int idx, bool shouldBlink) {
             switch (idx) {
-                case 0: redBlink = shouldBlink; break;
+                case 0: redBlink    = shouldBlink; break;
                 case 1: yellowBlink = shouldBlink; break;
-                case 2: blueBlink = shouldBlink; break;
-                case 3: greenBlink = shouldBlink; break;
+                case 2: blueBlink   = shouldBlink; break;
+                case 3: greenBlink  = shouldBlink; break;
             }
         }
 
@@ -644,7 +686,7 @@ class MastermindGame: public KeypadGame {
             this->clearInputBuffer();     // init values and 0 index
                                           // generate and set answer to rand value
             this->answer = generateRandomMastermindAnswer(this->inputBufferSize);
-            Serial.println(this->answer);
+            Serial.println(*this->answer);
             this->current_guesses = 0;    // init guess counter
             this->additional_guesses = 0; // start game with 0 additional guesses
 
@@ -664,26 +706,9 @@ class MastermindGame: public KeypadGame {
             Serial.println(this->answer);
         }
 
-        void setLEDByIndex(int idx, int state) {
-            switch (idx) {
-                case 0:
-                    this->board->redOn    = state;
-                    break;
-                case 1:
-                    this->board->yellowOn = state;
-                    break;
-                case 2:
-                    this->board->blueOn   = state;
-                    break;
-                case 3:
-                    this->board->greenOn  = state;
-                    break;
-            }
-        }
-
         void processInputValue(char value, int idx) {
             if (this->answer[idx] == value) {
-                this->setLEDByIndex(idx, ON);
+                this->board->setLEDByIndex(idx, ON);
                 return;
             }
 
@@ -701,16 +726,16 @@ class MastermindGame: public KeypadGame {
             }
 
             if (valueAnswerCount > valueGuessedCount) {
-                this->setLEDByIndex(idx, ON);
+                this->board->setLEDByIndex(idx, ON);
                 this->board->setBlinkByIndex(idx, true);
             } else {
-                this->setLEDByIndex(idx, OFF);
+                this->board->setLEDByIndex(idx, OFF);
                 this->board->setBlinkByIndex(idx, false);
             }
         }
 
         void blinkAnswer() {
-            this->board->blinkNumber(atoi(this->answer));
+            this->board->blinkNumbers(this->answer, this->inputBufferSize);
         }
 
         void submitGuess() {
@@ -918,6 +943,7 @@ void setup() {
     }
     setupDone = true;
 }
+
 
 // main loop
 void loop() {
