@@ -35,7 +35,7 @@ Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
 
 
 // generate a random number between answerMin and answerMax that may or may not be the middle (based on `allowMiddleAnswer`)
-int generateRandomAnswer(int answerMin, int answerMax, bool allowMiddleAnswer) {
+int generateRandomHighLowAnswer(int answerMin, int answerMax, bool allowMiddleAnswer) {
     int answerMid = (answerMax - answerMin) / 2;
 
     int answer;
@@ -45,19 +45,27 @@ int generateRandomAnswer(int answerMin, int answerMax, bool allowMiddleAnswer) {
     return answer;
 }
 
+char* generateRandomMastermindAnswer(int answerDigits) {
+    char* answer = new char[answerDigits + 1];
+    for (int i = 0; i < answerDigits; i++) {
+        answer[i] = '0' + random(0, 10);
+    }
+    return answer;
+}
+
 
 // track and handle LED light
 class LEDBoard {
     public:
-        bool redOn;    // out of guesses, game over
-        bool yellowOn; // guess is too low  (lower than answer)
-        bool blueOn;   // guess is too high (higher than answer)
-        bool greenOn;  // guess is correct  (equal to the answer)
+        bool redOn, yellowOn, blueOn, greenOn;
+        bool prevRedOn, prevYellowOn, prevBlueOn, prevGreenOn;
 
-        bool prevRedOn;
-        bool prevYellowOn;
-        bool prevBlueOn;
-        bool prevGreenOn;
+        bool redBlink, yellowBlink, blueBlink, greenBlink;
+        bool prevRedBlink, prevYellowBlink, prevBlueBlink, prevGreenBlink;
+
+        unsigned long lastBlinkToggle = 0;
+
+        bool blinkPhase = false;
 
         LEDBoard(bool redOn, bool yellowOn, bool blueOn, bool greenOn) {
             this->redOn    = redOn;
@@ -69,6 +77,16 @@ class LEDBoard {
             this->prevYellowOn = yellowOn;
             this->prevBlueOn   = blueOn;
             this->prevGreenOn  = greenOn;
+
+            this->redBlink    = false;
+            this->yellowBlink = false;
+            this->blueBlink   = false;
+            this->greenBlink  = false;
+
+            this->prevRedBlink    = false;
+            this->prevYellowBlink = false;
+            this->prevBlueBlink   = false;
+            this->prevGreenBlink  = false;
         }
 
         void updateLEDs() {
@@ -83,6 +101,11 @@ class LEDBoard {
             this->prevYellowOn = yellowOn;
             this->prevBlueOn   = blueOn;
             this->prevGreenOn  = greenOn;
+
+            this->prevRedBlink    = redBlink;
+            this->prevYellowBlink = yellowBlink;
+            this->prevBlueBlink   = blueBlink;
+            this->prevGreenBlink  = greenBlink;
         }
 
         void loadPrevState() {
@@ -90,6 +113,11 @@ class LEDBoard {
             this->yellowOn = prevYellowOn;
             this->blueOn   = prevBlueOn;
             this->greenOn  = prevGreenOn;
+
+            this->redBlink    = prevRedBlink;
+            this->yellowBlink = prevYellowBlink;
+            this->blueBlink   = prevBlueBlink;
+            this->greenBlink  = prevGreenBlink;
         }
 
         void powerRedSolo() {
@@ -293,64 +321,71 @@ class LEDBoard {
             this->loadPrevState();
             this->updateLEDs();
         }
+
+        void setBlinkByIndex(int idx, bool shouldBlink) {
+            switch (idx) {
+                case 0: redBlink = shouldBlink; break;
+                case 1: yellowBlink = shouldBlink; break;
+                case 2: blueBlink = shouldBlink; break;
+                case 3: greenBlink = shouldBlink; break;
+            }
+        }
+
+        void clearBlinks() {
+            redBlink = yellowBlink = blueBlink = greenBlink = false;
+        }
+
+        void updateBlinking(unsigned long intervalMS = 300) {
+            unsigned long now = millis();
+            if (now - lastBlinkToggle >= intervalMS) {
+                lastBlinkToggle = now;
+                blinkPhase = !blinkPhase;
+
+                digitalWrite(redLEDPin,    redBlink    ? (blinkPhase ? ON : OFF) : (redOn    ? ON : OFF));
+                digitalWrite(yellowLEDPin, yellowBlink ? (blinkPhase ? ON : OFF) : (yellowOn ? ON : OFF));
+                digitalWrite(blueLEDPin,   blueBlink   ? (blinkPhase ? ON : OFF) : (blueOn   ? ON : OFF));
+                digitalWrite(greenLEDPin,  greenBlink  ? (blinkPhase ? ON : OFF) : (greenOn  ? ON : OFF));
+            }
+        }
 };
 
-
-// delays for cycle when (re)starting game
-// how long in MS each light should be on in order RED, YELLOW, BLUE, GREEN
-const int startLEDDelays[4] = {350, 350, 350, 950};
-
-class HighLowGame {
-    private:
-        int answerMin;          // inclusive
-        int answerMax;          // inclusive
-        int max_guesses;        // max guesses each game, inclusive
-        bool allowMiddleAnswer; // whether random answer can be (answerMax - answerMin) / 2
-
-        int answer;                   // random integer in range [answerMin, answerMax] (*see allowMiddleAnswer)
-
-
+class KeypadGame {
     public:
-        LEDBoard* board = nullptr;    // track power status of LED lights
+        LEDBoard* board = nullptr;
 
         bool won;
 
-        char* inputBuffer;            // buffer that tracks user input
+        char* inputBuffer;
         int inputBufferSize;          // max size of input buffer excluding terminating null byte
         int inputBufferIdx;           // current index in buffer for next input character to go
+        int max_guesses;              // max guesses each game, inclusive
         int current_guesses;          // how many guesses have been made
         int additional_guesses;       // added to max_guesses
 
-        HighLowGame(int answerMin, int answerMax, int max_guesses, bool allowMiddleAnswer = false) {
-            // setup game constants
-            this->answerMin = answerMin;
-            this->answerMax = answerMax + 1; // random function uses exclusive max
+        KeypadGame(int inputBufferSize, int max_guesses) {
             this->max_guesses = max_guesses;
-            this->allowMiddleAnswer = allowMiddleAnswer;
 
             // initialize board
             this->board = new LEDBoard(false, false, false, false);
             this->board->updateLEDs();
 
-            // setup input buffer
-            this->inputBufferSize = floor(log10(abs(answerMax))) + 1; // get length of integer in base 10
+            this->inputBufferSize = inputBufferSize;
             this->inputBuffer = new char[inputBufferSize + 1];        // +1 for terminating null byte
-
-            // setup game variables
-            this->start();
         }
 
-        ~HighLowGame() {
+        virtual ~KeypadGame() {
             delete[] inputBuffer;
         }
 
-        bool isOutOfGuesses() {
+        virtual bool isGameOver() {
+            return this->won || this->isOutOfGuesses();
+        }
+
+        virtual bool isOutOfGuesses() {
             return this->current_guesses >= this->max_guesses + this->additional_guesses;
         }
 
-        bool isGameOver() {
-            return this->won || this->isOutOfGuesses();
-        }
+        virtual void handleInput(char key) = 0;
 
         void addToInputBuffer(char newChar) {
             if (this->inputBufferIdx < this->inputBufferSize) {
@@ -376,6 +411,49 @@ class HighLowGame {
             this->board->blinkAll(this->current_guesses, onDurationMS, offDurationMS);
         }
 
+        void guessInvalid() {
+            this->board->blinkRed(1000);
+        }
+
+        void outOfGuesses() {
+            this->board->redOn = true;
+            this->board->updateLEDs();
+            Serial.println("Game Over! You lost!");
+            Serial.print("Guesses Made: ");
+            Serial.println(this->current_guesses);
+        }
+
+};
+
+
+// delays for cycle when (re)starting game
+// how long in MS each light should be on in order RED, YELLOW, BLUE, GREEN
+const int startLEDDelays[4] = { 350, 350, 350, 950 };
+
+class HighLowGame: public KeypadGame {
+    private:
+        int answerMin;          // inclusive
+        int answerMax;          // inclusive
+        bool allowMiddleAnswer; // whether random answer can be (answerMax - answerMin) / 2
+
+        int answer;             // random integer in range [answerMin, answerMax] (*see allowMiddleAnswer)
+
+        static int calculateInputBufferSize(int answerMax) {
+            return floor(log10(abs(answerMax))) + 1;
+        }
+
+
+    public:
+        HighLowGame(int answerMin, int answerMax, int max_guesses, bool allowMiddleAnswer = false) : KeypadGame(calculateInputBufferSize(answerMax), max_guesses) {
+            // setup game constants
+            this->answerMin = answerMin;
+            this->answerMax = answerMax + 1; // random function uses exclusive max
+            this->allowMiddleAnswer = allowMiddleAnswer;
+
+            // setup game variables
+            this->start();
+        }
+
         void blinkSecretNumber() {
             this->board->blinkNumber(this->answer);
         }
@@ -388,28 +466,13 @@ class HighLowGame {
             this->won = false;            // ...
             this->clearInputBuffer();     // init values and 0 index
                                           // generate and set answer to rand value
-            this->answer = generateRandomAnswer(this->answerMin, this->answerMax, this->allowMiddleAnswer);
+            this->answer = generateRandomHighLowAnswer(this->answerMin, this->answerMax, this->allowMiddleAnswer);
             Serial.println(this->answer);
             this->current_guesses = 0;    // init guess counter
             this->additional_guesses = 0; // start game with 0 additional guesses
 
             this->board->cycle(startLEDDelays);
             Serial.println("(re)starting done...");
-        }
-
-        void outOfGuesses() {
-            this->board->redOn = true;
-            this->board->updateLEDs();
-            Serial.println("Game Over! You lost!");
-            Serial.print("Guesses Made: ");
-            Serial.println(this->current_guesses);
-            Serial.print("Answer: ");
-            Serial.println(this->answer);
-            Serial.println();
-        }
-
-        void guessInvalid() {
-            this->board->blinkRed(1000);
         }
 
         void guessLow() {
@@ -456,6 +519,9 @@ class HighLowGame {
 
                     if (this->isOutOfGuesses() && !this->won) {
                         this->outOfGuesses();
+                        Serial.print("Answer: ");
+                        Serial.println(this->answer);
+                        Serial.println();
                     }
                 } else {
                     this->guessInvalid();
@@ -464,26 +530,321 @@ class HighLowGame {
                 this->clearInputBuffer();
             }
         }
+
+        void handleInput(char key) {
+            if (key) {
+                if (this->isGameOver()) {
+                    // if out of guesses or guessed correctly
+                    switch(key) {
+                        case '*':
+                            Serial.println();
+                            Serial.println();
+
+                            this->start();
+
+                            Serial.print("Guesses Made: ");
+                            Serial.println(this->current_guesses);
+                            Serial.print("Current Buffer: ");
+                            break;
+                        case 'C':
+                            this->blinkGuesses(550);
+                            break;
+                        case 'B':
+                            if (!this->won) {
+                                this->board->redOn = false;
+                                this->board->updateLEDs();
+
+                                this->oneMoreGuess();
+                                Serial.print("Guesses Made: ");
+                                Serial.println(this->current_guesses);
+                                Serial.print("Current Buffer: ");
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                } else {
+                    // if game is in progress
+                    // "*" key restarts the game
+                    // "C" key blinks number of guesses made in current game including additional
+                    // "B" key gives another guess even if game is over
+                    // "A" key clears current input buffer
+                    // "#" key submits current input buffer as guess
+                    // Every other key is added to buffer and sets lights to off
+                    // "D" blinks answer in base 2
+                    switch(key) {
+                        case '*':
+                            Serial.println();
+                            Serial.println();
+
+                            this->start();
+
+                            Serial.print("Guesses Made: ");
+                            Serial.println(this->current_guesses);
+                            Serial.print("Current Buffer: ");
+                            break;
+                        case 'D':
+                            this->blinkSecretNumber();
+                            break;
+                        case 'C':
+                            this->blinkGuesses(550);
+                            break;
+                        case 'B':
+                            this->oneMoreGuess();
+                            break;
+                        case 'A':
+                            Serial.println();
+
+                            this->clearInputBuffer();
+
+                            Serial.print("Guesses Made: ");
+                            Serial.println(this->current_guesses);
+                            Serial.print("Current Buffer: ");
+                            break;
+                        case '#':
+                            Serial.println();
+
+                            this->submitGuess();
+
+                            if (!this->isGameOver()) {
+                                Serial.print("Guesses Made: ");
+                                Serial.println(this->current_guesses);
+                                Serial.print("Current Buffer: ");
+                            }
+                            break;
+                        default:
+                            this->board->setAll(false);
+                            this->board->updateLEDs();
+
+                            this->addToInputBuffer(key);
+                            break;
+                    }
+                }
+            }
+        }   
+};
+
+
+class MastermindGame: public KeypadGame {
+    private:
+        char* answer;            // random integer in range [answerMin, answerMax] (*see allowMiddleAnswer)
+
+    public:
+        MastermindGame(int answerDigits, int max_guesses) : KeypadGame(answerDigits, max_guesses) {
+            // setup game variables
+            this->start();
+        }
+
+        void start() {
+            this->board->setAll(false);
+            this->board->updateLEDs();
+
+            Serial.println("(re)starting...");
+            this->won = false;            // ...
+            this->clearInputBuffer();     // init values and 0 index
+                                          // generate and set answer to rand value
+            this->answer = generateRandomMastermindAnswer(this->inputBufferSize);
+            Serial.println(this->answer);
+            this->current_guesses = 0;    // init guess counter
+            this->additional_guesses = 0; // start game with 0 additional guesses
+
+            this->board->cycle(startLEDDelays);
+            Serial.println("(re)starting done...");
+        }
+
+        void guessCorrect() {
+            this->won = true;
+
+            Serial.println("Correct!");
+            Serial.println();
+            Serial.println("Game Over! You won!");
+            Serial.print("Guesses Made: ");
+            Serial.println(this->current_guesses);
+            Serial.print("Answer: ");
+            Serial.println(this->answer);
+        }
+
+        void setLEDByIndex(int idx, int state) {
+            switch (idx) {
+                case 0:
+                    this->board->redOn    = state;
+                    break;
+                case 1:
+                    this->board->yellowOn = state;
+                    break;
+                case 2:
+                    this->board->blueOn   = state;
+                    break;
+                case 3:
+                    this->board->greenOn  = state;
+                    break;
+            }
+        }
+
+        void processInputValue(char value, int idx) {
+            if (this->answer[idx] == value) {
+                this->setLEDByIndex(idx, ON);
+                return;
+            }
+
+            int valueAnswerCount = 0;   // how many of value character are in answer
+            int valueGuessedCount = 0;  // how many of value character have been processed already
+            for (int i = 0; i < this->inputBufferSize; i++) {
+                char checkValueAnswer = this->answer[i];
+                char checkValueInput = this->inputBuffer[i];
+                if (value == checkValueAnswer) {
+                    valueAnswerCount++;
+                }
+                if (value == checkValueInput && i < idx) {
+                    valueGuessedCount++;
+                }
+            }
+
+            if (valueAnswerCount > valueGuessedCount) {
+                this->setLEDByIndex(idx, ON);
+                this->board->setBlinkByIndex(idx, true);
+            } else {
+                this->setLEDByIndex(idx, OFF);
+                this->board->setBlinkByIndex(idx, false);
+            }
+        }
+
+        void blinkAnswer() {
+            this->board->blinkNumber(atoi(this->answer));
+        }
+
+        void submitGuess() {
+            if (!this->isGameOver()) {
+                char* guess = this->inputBuffer;
+                char* answer = this->answer;
+
+                if (strlen(guess) < this->inputBufferSize) {
+                    this->guessInvalid();
+                } else {
+                    this->board->clearBlinks();
+
+                    this->current_guesses += 1;
+
+                    bool allCorrect = true;
+                    for (int i = 0; i < this->inputBufferSize; i++) {
+                        this->processInputValue(this->inputBuffer[i], i);
+                        if (this->inputBuffer[i] != this->answer[i]) {
+                            allCorrect = false;
+                        }
+                    }
+
+                    if (allCorrect) {
+                        this->guessCorrect();
+                    }
+
+                    if (this->isOutOfGuesses() && !this->won) {
+                        this->outOfGuesses();
+                        Serial.print("Answer: ");
+                        Serial.println(this->answer);
+                        Serial.println();
+                    }
+                }
+                this->board->updateLEDs();
+                this->clearInputBuffer();
+            }
+        }
+
+        void handleInput(char key) { 
+            if (key) {
+                if (this->isGameOver()) {
+                    // if out of guesses or guessed correctly
+                    switch(key) {
+                        case '*':
+                            Serial.println();
+                            Serial.println();
+
+                            this->start();
+
+                            Serial.print("Guesses Made: ");
+                            Serial.println(this->current_guesses);
+                            Serial.print("Current Buffer: ");
+                            break;
+                        case 'C':
+                            this->blinkGuesses(550);
+                            break;
+                        case 'B':
+                            if (!this->won) {
+                                this->board->redOn = false;
+                                this->board->updateLEDs();
+
+                                this->oneMoreGuess();
+                                Serial.print("Guesses Made: ");
+                                Serial.println(this->current_guesses);
+                                Serial.print("Current Buffer: ");
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                } else {
+                    // if game is in progress
+                    // "*" key restarts the game
+                    // "C" key blinks number of guesses made in current game including additional
+                    // "B" key gives another guess even if game is over
+                    // "A" key clears current input buffer
+                    // "#" key submits current input buffer as guess
+                    // Every other key is added to buffer and sets lights to off
+                    // "D" blinks answer in base 2
+                    switch(key) {
+                        case '*':
+                            Serial.println();
+                            Serial.println();
+
+                            this->start();
+
+                            Serial.print("Guesses Made: ");
+                            Serial.println(this->current_guesses);
+                            Serial.print("Current Buffer: ");
+                            break;
+                        case 'D':
+                            this->blinkAnswer();
+                            break;
+                        case 'C':
+                            this->blinkGuesses(550);
+                            break;
+                        case 'B':
+                            this->oneMoreGuess();
+                            break;
+                        case 'A':
+                            Serial.println();
+
+                            this->clearInputBuffer();
+
+                            Serial.print("Guesses Made: ");
+                            Serial.println(this->current_guesses);
+                            Serial.print("Current Buffer: ");
+                            break;
+                        case '#':
+                            Serial.println();
+
+                            this->submitGuess();
+
+                            if (!this->isGameOver()) {
+                                Serial.print("Guesses Made: ");
+                                Serial.println(this->current_guesses);
+                                Serial.print("Current Buffer: ");
+                            }
+                            break;
+                        default:
+                            this->addToInputBuffer(key);
+                            break;
+                    }
+                }
+            }
+        }
 };
 
 
 // game instance
-HighLowGame* game = nullptr;
+bool setupDone = false;
+KeypadGame* game = nullptr;
 
-
-// special function. runs on start.
-void setup() {
-    // initialize Serial Connection
-    Serial.begin(9600);
-    randomSeed(analogRead(0));
-    Serial.println("starting setup...");
-
-    // setup LED Pins as output
-    pinMode(redLEDPin,    OUTPUT);
-    pinMode(yellowLEDPin, OUTPUT);
-    pinMode(blueLEDPin,   OUTPUT);
-    pinMode(greenLEDPin,  OUTPUT);
-    
+void setupAndPlayHighLow() {    
     // initialize Game Parameter Values
     int answerMin          =     1; // inclusive
     int answerMax          =   100; // inclusive
@@ -494,104 +855,81 @@ void setup() {
     game = new HighLowGame(answerMin, answerMax, max_guesses, allowMiddleAnswer);
 
     // debugging output
-    Serial.println("setup done...\n");
+    Serial.println("Setup done...\n");
 
     Serial.print("Guesses Made: ");
     Serial.println(game->current_guesses);
     Serial.print("Current Buffer: ");
 }
 
+void setupAndPlayMastermind() {    
+    // initialize Game Parameter Values
+    int answerDigits       =     4; // inclusive
+    int max_guesses        =     8; // max guesses each game, inclusive
 
-// main loop
-void loop() {
-    char key = keypad.getKey();
-    if (key) {
-        if (game->isGameOver()) {
-            // if out of guesses or guessed correctly
-            switch(key) {
-                case '*':
-                    Serial.println();
-                    Serial.println();
+    // create game instance
+    game = new MastermindGame(answerDigits, max_guesses);
 
-                    game->start();
+    // debugging output
+    Serial.println("Setup done...\n");
 
-                    Serial.print("Guesses Made: ");
-                    Serial.println(game->current_guesses);
-                    Serial.print("Current Buffer: ");
-                    break;
-                case 'C':
-                    game->blinkGuesses(550);
-                    break;
-                case 'B':
-                    if (!game->won) {
-                        game->board->redOn = false;
-                        game->board->updateLEDs();
+    Serial.print("Guesses Made: ");
+    Serial.println(game->current_guesses);
+    Serial.print("Current Buffer: ");
+}
 
-                        game->oneMoreGuess();
-                        Serial.print("Guesses Made: ");
-                        Serial.println(game->current_guesses);
-                        Serial.print("Current Buffer: ");
-                    }
-                    break;
-                default:
-                    break;
-            }
-        } else {
-            // if game is in progress
-            // "*" key restarts the game
-            // "C" key blinks number of guesses made in current game including additional
-            // "B" key gives another guess even if game is over
-            // "A" key clears current input buffer
-            // "#" key submits current input buffer as guess
-            // Every other key is added to buffer and sets lights to off
-            // "D" blinks answer in base 2
-            switch(key) {
-                case '*':
-                    Serial.println();
-                    Serial.println();
+// special function. runs on start.
+void setup() {
+    // initialize Serial Connection
+    Serial.begin(9600);
+    randomSeed(analogRead(0));
 
-                    game->start();
+    Serial.println("");
+    Serial.println("starting setup...");
 
-                    Serial.print("Guesses Made: ");
-                    Serial.println(game->current_guesses);
-                    Serial.print("Current Buffer: ");
-                    break;
-                case 'D':
-                    game->blinkSecretNumber();
-                    break;
-                case 'C':
-                    game->blinkGuesses(550);
-                    break;
-                case 'B':
-                    game->oneMoreGuess();
-                    break;
+    // setup LED Pins as output
+    pinMode(redLEDPin,    OUTPUT);
+    pinMode(yellowLEDPin, OUTPUT);
+    pinMode(blueLEDPin,   OUTPUT);
+    pinMode(greenLEDPin,  OUTPUT);
+
+
+    Serial.println("Waiting for game selection...");
+    Serial.println("    [A] High-Low");
+    Serial.println("    [B] Mastermind");
+    Serial.println("");
+
+    while (game == nullptr) {
+        char key = keypad.getKey();
+        if (key) {
+            switch (key) {
                 case 'A':
-                    Serial.println();
-
-                    game->clearInputBuffer();
-
-                    Serial.print("Guesses Made: ");
-                    Serial.println(game->current_guesses);
-                    Serial.print("Current Buffer: ");
+                    Serial.println("Starting High-Low Game...");
+                    setupAndPlayHighLow();
                     break;
-                case '#':
-                    Serial.println();
-
-                    game->submitGuess();
-
-                    if (!game->isGameOver()) {
-                        Serial.print("Guesses Made: ");
-                        Serial.println(game->current_guesses);
-                        Serial.print("Current Buffer: ");
-                    }
-                    break;
-                default:
-                    game->board->setAll(false);
-                    game->board->updateLEDs();
-
-                    game->addToInputBuffer(key);
+                case 'B':
+                    Serial.println("Starting High-Low Game...");
+                    setupAndPlayMastermind();
                     break;
             }
         }
     }
+    setupDone = true;
+}
+
+
+// main loop
+void loop() {
+    if (!setupDone) {
+        digitalWrite(redLEDPin, ON);
+        delay(250);
+        digitalWrite(redLEDPin, OFF);
+        delay(250);
+        return;
+    }
+
+    char key = keypad.getKey();
+    game->handleInput(key);
+
+    game->board->updateBlinking();
 }
