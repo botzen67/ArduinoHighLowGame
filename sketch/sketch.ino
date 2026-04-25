@@ -305,14 +305,6 @@ class LEDBoard {
             delay(msDelay);
             for (int i = 0; i < digits; i++) {
                 int targetDigit = numbers[i] - '0';
-                Serial.print("targetDigit: ");
-                Serial.println(targetDigit);
-                Serial.print("i: ");
-                Serial.println(i);
-                Serial.print("numbers[i]: ");
-                Serial.println(numbers[i]);
-                Serial.print("numbers: ");
-                Serial.println(numbers);
                 this->redOn = targetDigit == 0 || targetDigit == 1  || targetDigit == 3 || targetDigit == 5 || targetDigit == 7 || targetDigit == 9;
                 this->yellowOn = targetDigit == 0 || targetDigit == 2  || targetDigit == 3 || targetDigit == 6 || targetDigit == 7;
                 this->blueOn = targetDigit == 0 || targetDigit == 4  || targetDigit == 5 || targetDigit == 6 || targetDigit == 7;
@@ -686,7 +678,7 @@ class MastermindGame: public KeypadGame {
             this->clearInputBuffer();     // init values and 0 index
                                           // generate and set answer to rand value
             this->answer = generateRandomMastermindAnswer(this->inputBufferSize);
-            Serial.println(*this->answer);
+            Serial.println(this->answer);
             this->current_guesses = 0;    // init guess counter
             this->additional_guesses = 0; // start game with 0 additional guesses
 
