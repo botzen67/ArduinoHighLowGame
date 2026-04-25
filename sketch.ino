@@ -253,7 +253,7 @@ class LEDBoard {
         }
 
         void blinkNumber(int number) {
-            int msDelay = 250;
+            int msDelay = 300;
 
             // Get each digit
             int numberDigits = floor(log10(abs(number))) + 1; // number of base 10 digits
