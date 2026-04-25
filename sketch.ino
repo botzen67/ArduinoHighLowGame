@@ -908,7 +908,7 @@ void setup() {
                     setupAndPlayHighLow();
                     break;
                 case 'B':
-                    Serial.println("Starting High-Low Game...");
+                    Serial.println("Starting Mastermind Game...");
                     setupAndPlayMastermind();
                     break;
             }
