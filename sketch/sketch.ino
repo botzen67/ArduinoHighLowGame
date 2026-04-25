@@ -899,6 +899,8 @@ void setup() {
     Serial.println("    [B] Mastermind");
     Serial.println("");
 
+    digitalWrite(greenLEDPin, ON);
+
     while (game == nullptr) {
         char key = keypad.getKey();
         if (key) {
@@ -917,14 +919,9 @@ void setup() {
     setupDone = true;
 }
 
-
 // main loop
 void loop() {
     if (!setupDone) {
-        digitalWrite(redLEDPin, ON);
-        delay(250);
-        digitalWrite(redLEDPin, OFF);
-        delay(250);
         return;
     }
 
