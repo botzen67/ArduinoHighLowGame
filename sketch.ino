@@ -243,6 +243,11 @@ class LEDBoard {
             this->saveState();
             this->setAll(false);
             this->updateLEDs();
+
+            if (numberDigits == 1) 
+            {
+              this->blinkAll(1, msDelay);
+            }
             
             // Do lights
             delay(msDelay);
