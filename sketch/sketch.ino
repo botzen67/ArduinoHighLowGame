@@ -252,9 +252,7 @@ class LEDBoard {
             this->updateLEDs();
         }
 
-        void blinkNumber(int number) {
-            int msDelay = 300;
-
+        void blinkNumber(int number, int msDelay = 300) {
             // Get each digit
             int numberDigits = floor(log10(abs(number))) + 1; // number of base 10 digits
             int* digits = new int[numberDigits]; // array for each digit
@@ -347,6 +345,15 @@ class LEDBoard {
             this->updateLEDs();
         }
 
+        bool getLEDByIndex(int idx) {
+            switch (idx) {
+                case 0: return redOn;
+                case 1: return yellowOn;
+                case 2: return blueOn;
+                case 3: return greenOn;
+            }
+        }
+
         void setLEDByIndex(int idx, int state) {
             switch (idx) {
                 case 0: redOn    = state; break;
@@ -362,6 +369,15 @@ class LEDBoard {
                 case 1: yellowBlink = shouldBlink; break;
                 case 2: blueBlink   = shouldBlink; break;
                 case 3: greenBlink  = shouldBlink; break;
+            }
+        }
+
+        bool getBlinkByIndex(int idx) {
+            switch (idx) {
+                case 0: return redBlink;
+                case 1: return yellowBlink;
+                case 2: return blueBlink;
+                case 3: return greenBlink;
             }
         }
 
@@ -441,7 +457,7 @@ class KeypadGame {
             this->additional_guesses += 1;
         }
 
-        void blinkGuesses(int onDurationMS, int offDurationMS = 250) {
+        virtual void blinkGuesses(int onDurationMS, int offDurationMS = 250) {
             this->board->blinkAll(this->current_guesses, onDurationMS, offDurationMS);
         }
 
@@ -699,13 +715,9 @@ class MastermindGame: public KeypadGame {
         }
 
         void processInputValue(char value, int idx) {
-            if (this->answer[idx] == value) {
-                this->board->setLEDByIndex(idx, ON);
-                return;
-            }
-
             int valueAnswerCount = 0;   // how many of value character are in answer
             int valueGuessedCount = 0;  // how many of value character have been processed already
+            int valueLEDCount = 0;      // how many LEDs are on for the current value
             for (int i = 0; i < this->inputBufferSize; i++) {
                 char checkValueAnswer = this->answer[i];
                 char checkValueInput = this->inputBuffer[i];
@@ -714,20 +726,68 @@ class MastermindGame: public KeypadGame {
                 }
                 if (value == checkValueInput && i < idx) {
                     valueGuessedCount++;
+                    if (this->board->getLEDByIndex(i)) {
+                        valueLEDCount++;
+                    }
                 }
             }
 
-            if (valueAnswerCount > valueGuessedCount) {
+            if (this->answer[idx] == value) {
+                this->board->setLEDByIndex(idx, ON);
+                this->board->setBlinkByIndex(idx, false);
+                valueLEDCount++;
+            } else if (valueAnswerCount > valueGuessedCount) {
                 this->board->setLEDByIndex(idx, ON);
                 this->board->setBlinkByIndex(idx, true);
+                valueLEDCount++;
             } else {
                 this->board->setLEDByIndex(idx, OFF);
                 this->board->setBlinkByIndex(idx, false);
+            }
+
+            Serial.print("valueAnswerCount: ");
+            Serial.println(valueAnswerCount);
+            Serial.print("valueGuessedCount: ");
+            Serial.println(valueGuessedCount);
+            Serial.print("valueLEDCount: ");
+            Serial.println(valueLEDCount);
+
+            if (valueLEDCount <= valueAnswerCount) {
+                return;
+            }
+
+            for (int i = 0; i < idx; i++) {
+                if (valueLEDCount <= valueAnswerCount) {
+                    break;
+                }
+                
+                bool isValue = this->inputBuffer[i] == value;
+                if (!isValue) {
+                    continue;
+                }
+
+                bool isLEDOn = this->board->getLEDByIndex(i);
+                bool isLEDBlinking = this->board->getBlinkByIndex(i);
+                if (!isLEDOn || !isLEDBlinking) {
+                    continue;
+                }
+
+                valueLEDCount--;
+                this->board->setLEDByIndex(i, OFF);
+                this->board->setBlinkByIndex(i, false);
             }
         }
 
         void blinkAnswer() {
             this->board->blinkNumbers(this->answer, this->inputBufferSize);
+        }
+
+        void blinkGuesses(int onDurationMS, int offDurationMS = 300) {
+            this->board->blinkNumber(this->current_guesses);
+            if (this->won) {
+                this->board->setAll(true);
+                this->board->updateLEDs();
+            }
         }
 
         void submitGuess() {
@@ -742,23 +802,44 @@ class MastermindGame: public KeypadGame {
 
                     this->current_guesses += 1;
 
-                    bool allCorrect = true;
+                    bool allWrong = true;
                     for (int i = 0; i < this->inputBufferSize; i++) {
-                        this->processInputValue(this->inputBuffer[i], i);
-                        if (this->inputBuffer[i] != this->answer[i]) {
-                            allCorrect = false;
+                        int value1 = this->inputBuffer[i] - '0';
+                        for (int j = 0; j < this->inputBufferSize; j++) {
+                            int value2 = this->answer[j] - '0';
+                            if (value1 == value2) {
+                                allWrong = false;
+                                break;
+                            }
+                        }
+                        if (!allWrong) {
+                            break;
                         }
                     }
 
-                    if (allCorrect) {
-                        this->guessCorrect();
-                    }
+                    if (allWrong) {
+                        this->board->setAll(false);
+                        this->board->updateLEDs();
+                        this->board->blinkAll(1, 50);
+                    } else {
+                        bool allCorrect = true;
+                        for (int i = 0; i < this->inputBufferSize; i++) {
+                            this->processInputValue(this->inputBuffer[i], i);
+                            if (this->inputBuffer[i] != this->answer[i]) {
+                                allCorrect = false;
+                            }
+                        }
 
-                    if (this->isOutOfGuesses() && !this->won) {
-                        this->outOfGuesses();
-                        Serial.print("Answer: ");
-                        Serial.println(this->answer);
-                        Serial.println();
+                        if (allCorrect) {
+                            this->guessCorrect();
+                        }
+
+                        if (this->isOutOfGuesses() && !this->won) {
+                            this->outOfGuesses();
+                            Serial.print("Answer: ");
+                            Serial.println(this->answer);
+                            Serial.println();
+                        }
                     }
                 }
                 this->board->updateLEDs();
